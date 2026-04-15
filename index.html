@@ -1,0 +1,380 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+    <meta charset="UTF-8">
+    <title>座席替え v3.1.1</title>
+    <style>
+        :root { 
+            --male-bg: #e3f2fd; --male-border: #2196f3; 
+            --female-bg: #fce4ec; --female-border: #f06292; 
+            --empty-bg: #f5f5f5;
+            --seat-width: 150px;
+        }
+        body { font-family: "Helvetica Neue", Arial, sans-serif; margin: 20px; background: #f4f7f9; color: #333; }
+        .no-print { background: white; padding: 20px; border-radius: 8px; box-shadow: 0 2px 10px rgba(0,0,0,0.1); margin-bottom: 20px; }
+        .config-row { display: flex; gap: 15px; margin-bottom: 10px; align-items: center; flex-wrap: wrap; }
+        input[type="number"], select, input[type="file"], input[type="range"] { padding: 8px; border: 1px solid #ccc; border-radius: 4px; }
+        button { border: none; padding: 10px 18px; border-radius: 4px; cursor: pointer; font-weight: bold; }
+        .btn-blue { background: #3498db; color: white; }
+        .btn-green { background: #27ae60; color: white; }
+        .btn-gray { background: #95a5a6; color: white; }
+        
+        .comparison-container { display: flex; gap: 20px; justify-content: center; align-items: flex-start; transition: flex-direction 0.3s; }
+        .layout-vertical { flex-direction: column; align-items: center; }
+        .layout-vertical .map-section.current { order: 1; }
+        .layout-vertical .map-section.previous { order: 2; }
+        .layout-horizontal { flex-direction: row; flex-wrap: nowrap; }
+        .layout-horizontal .map-section.previous { order: 1; }
+        .layout-horizontal .map-section.current { order: 2; }
+
+        .map-section { background: white; padding: 20px; border-radius: 10px; border: 1px solid #ddd; flex: 0 0 auto; }
+        .map-title { text-align: center; font-weight: bold; font-size: 1.2em; margin-bottom: 10px; color: #7f8c8d; }
+        .map-title.current { color: #2c3e50; font-size: 1.4em; }
+
+        .seat-grid { display: grid; gap: 8px; justify-content: center; }
+        .seat { 
+            width: var(--seat-width); aspect-ratio: 4 / 3; 
+            border: 2px solid #ccc; border-radius: 6px; 
+            display: flex; flex-direction: column; justify-content: center; align-items: center; 
+            text-align: center; background: white; position: relative;
+            font-size: calc(var(--seat-width) * 0.08); 
+        }
+        .seat.male { background-color: var(--male-bg); border-color: var(--male-border); }
+        .seat.female { background-color: var(--female-bg); border-color: var(--female-border); }
+        .seat.empty { background-color: var(--empty-bg); border-style: dashed; color: #bbb; }
+        
+        .map-section.current .seat.can-click { cursor: pointer; }
+        .seat .name { font-weight: bold; font-size: 1.3em; margin-top: 2px; }
+        .tag { position: absolute; top: 2px; right: 2px; font-size: 0.8em; background: #d32f2f; color: white; padding: 1px 3px; border-radius: 3px; }
+        
+        .map-section.previous .seat:not(.empty) { cursor: pointer; }
+        .seat.selected { outline: 3px solid #f1c40f; z-index: 10; box-shadow: 0 0 15px rgba(241, 196, 15, 0.5); }
+
+        .teacher-desk { width: 40%; height: 25px; background: #eee; border: 1px solid #ccc; margin: 0 auto 15px auto; text-align: center; line-height: 25px; font-size: 0.8em; border-radius: 0 0 10px 10px; }
+        #status-container { background: #eef2f7; padding: 10px; border-radius: 6px; margin: 10px 0; text-align: center; font-family: monospace; }
+        .stat-val { font-weight: bold; color: #e67e22; }
+
+        @media print { 
+            .no-print, .map-section.previous { display: none !important; } 
+            .map-section.current { border: none; padding: 0; order: 1 !important; }
+        }
+    </style>
+</head>
+<body onresize="updateLayout()">
+
+<div class="no-print">
+    <h1>座席替え v3.1.1</h1>
+    <div class="config-row">
+        <button class="btn-gray" onclick="downloadTemplate()">① テンプレートDL</button>
+        <input type="file" id="csvFile" accept=".csv">
+        <label>列:</label> 
+        <select id="cols" onchange="renderPrevMap()"><option value="4">4列</option><option value="6" selected>6列</option><option value="8">8列</option></select>
+        <label>前方行数:</label> <input type="number" id="frontLimit" value="3" style="width: 50px;">
+        <label>最後列の詰め方:</label>
+        <select id="alignLastRow" onchange="renderPrevMap()">
+            <option value="center" selected>中央</option>
+            <option value="left">左詰め</option>
+            <option value="right">右詰め</option>
+        </select>
+    </div>
+    <div class="config-row">
+        <label>並び順:</label>
+        <select id="orderSelect">
+            <option value="MF">男・女</option>
+            <option value="FM">女・男</option>
+            <option value="CHECKER_MF">男女交互</option>
+            <option value="CHECKER_FM">女男交互</option>
+            <option value="MIX">ランダム</option>
+        </select>
+        <label>最大試行:</label> <input type="number" id="maxTrials" value="20000" style="width: 80px;">
+        <label>目標合格:</label> <input type="number" id="targetSuccess" value="1000" style="width: 70px;">
+        <button class="btn-blue" onclick="runOptimization()">② 座席を生成</button>
+        <button id="downloadBtn" class="btn-green" onclick="downloadCSV()" style="display:none;">③ CSV保存</button>
+    </div>
+    <div class="config-row">
+        <label>座席サイズ:</label> 
+        <input type="range" id="sizeSlider" min="60" max="200" value="150" oninput="changeSize(this.value)">
+        <span id="sizeVal">150px</span>
+        <span id="info-count" style="margin-left: 20px; color: #666; font-weight: bold;"></span>
+    </div>
+    <div id="status-container">
+        試行: <span id="trial-count" class="stat-val">0</span> / <span id="trial-max">20000</span> | 
+        合格: <span id="success-count" class="stat-val">0</span> / <span id="target-count">1000</span>
+        <div id="final-msg" style="font-weight:bold; color:#2980b9; margin-top:5px;"></div>
+    </div>
+</div>
+
+<div id="mainContainer" class="comparison-container layout-horizontal">
+    <div class="map-section previous">
+        <div class="map-title">【前回】の座席表</div>
+        <div class="teacher-desk">教卓</div>
+        <div id="prevMap" class="seat-grid"></div>
+    </div>
+    <div class="map-section current">
+        <div class="map-title current">【今回】の座席表</div>
+        <div class="teacher-desk">教卓</div>
+        <div id="currentMap" class="seat-grid"></div>
+    </div>
+</div>
+
+<script>
+    let students = [];
+    let currentLayout = [];
+    let firstSelectedSeat = null;
+
+    function changeSize(val) {
+        document.documentElement.style.setProperty('--seat-width', val + 'px');
+        document.getElementById('sizeVal').innerText = val + 'px';
+        updateLayout();
+    }
+
+    function updateLayout() {
+        const container = document.getElementById('mainContainer');
+        const cols = parseInt(document.getElementById('cols').value);
+        const seatWidth = parseInt(getComputedStyle(document.documentElement).getPropertyValue('--seat-width'));
+        const sectionWidth = (seatWidth + 8) * cols + 60; 
+        const windowWidth = window.innerWidth;
+
+        if (sectionWidth * 2 > windowWidth - 40) {
+            container.classList.remove('layout-horizontal');
+            container.classList.add('layout-vertical');
+        } else {
+            container.classList.remove('layout-vertical');
+            container.classList.add('layout-horizontal');
+        }
+    }
+
+    function getAutoRows(count, cols) {
+        return Math.ceil(count / cols);
+    }
+
+    function downloadTemplate() {
+        const header = "出席番号,名前,性別,前回行,前回列,前方優先,NG相手出席番号,過去ペア履歴\n";
+        const examples = "1,田中 太郎,男,1,1,1,,2;5\n2,佐藤 花子,女,1,2,0,5,1\n";
+        const blob = new Blob(["\ufeff" + header + examples], { type: 'text/csv;charset=utf-8;' });
+        const a = document.createElement('a'); a.href = URL.createObjectURL(blob); a.download = "template.csv"; a.click();
+    }
+
+    document.getElementById('csvFile').addEventListener('change', e => {
+        const reader = new FileReader();
+        reader.onload = ev => {
+            const lines = ev.target.result.split(/\r?\n/).filter(l => l.includes(','));
+            students = lines.slice(1).map(l => ({
+                id: c(l,0), name: c(l,1), gender: c(l,2),
+                prevRow: parseInt(c(l,3))||0, prevCol: parseInt(c(l,4))||0,
+                isFront: parseInt(c(l,5))===1, ngId: c(l,6),
+                history: c(l,7) ? c(l,7).replace(/"/g,'').split(';').map(s=>s.trim()) : []
+            }));
+            function c(l, i) { return l.split(',')[i]?.trim() || ""; }
+            document.getElementById('info-count').innerText = `読み込み: ${students.length}名`;
+            renderPrevMap();
+        };
+        reader.readAsText(e.target.files[0]);
+    });
+
+    function toggleFrontFlag(studentId) {
+        const s = students.find(x => x.id === studentId);
+        if (s) { s.isFront = !s.isFront; renderPrevMap(); }
+    }
+
+    function handleManualSwap(r, c) {
+        const cols = parseInt(document.getElementById('cols').value);
+        const rows = currentLayout.length;
+        const studentAtPos = currentLayout[r][c];
+        const isLastRow = (r === rows - 1);
+
+        if (!firstSelectedSeat) {
+            if (!studentAtPos) return; 
+            firstSelectedSeat = { r, c };
+            const divs = document.querySelectorAll('#currentMap .seat');
+            divs[r * cols + c].classList.add('selected');
+        } else {
+            const r1 = firstSelectedSeat.r, c1 = firstSelectedSeat.c;
+            const isFirstPersonInLastRow = (r1 === rows - 1);
+            let swapReady = false;
+            if (studentAtPos) swapReady = true;
+            else if (isLastRow && isFirstPersonInLastRow) swapReady = true;
+
+            if (swapReady) {
+                const temp = currentLayout[r1][c1];
+                currentLayout[r1][c1] = currentLayout[r][c];
+                currentLayout[r][c] = temp;
+            }
+            firstSelectedSeat = null;
+            renderCurrentMap(currentLayout.length, currentLayout[0].length);
+        }
+    }
+
+    function createSeatDiv(s, r, c, type, isLastRow = false) {
+        const div = document.createElement('div');
+        div.className = 'seat' + (s ? (s.gender==='男'?' male':' female') : ' empty');
+        if (type === 'curr' && (s || isLastRow)) div.classList.add('can-click');
+        div.innerHTML = s ? `<div style="opacity:0.6;">No.${s.id}</div><div class="name">${s.name}</div>${s.isFront?'<span class="tag">前</span>':''}` : '空席';
+        if (type === 'prev' && s) div.onclick = () => toggleFrontFlag(s.id);
+        else if (type === 'curr') div.onclick = () => handleManualSwap(r, c);
+        return div;
+    }
+
+    function renderPrevMap() {
+        if (!students.length) return;
+        const C = parseInt(document.getElementById('cols').value);
+        const R = getAutoRows(students.length, C);
+        const grid = document.getElementById('prevMap');
+        grid.innerHTML = ''; grid.style.gridTemplateColumns = `repeat(${C}, var(--seat-width))`;
+        let prevLayout = Array.from({length:R}, () => Array(C).fill(null));
+        students.forEach(s => {
+            if(s.prevRow > 0 && s.prevRow <= R && s.prevCol > 0 && s.prevCol <= C) prevLayout[s.prevRow-1][s.prevCol-1] = s;
+        });
+        prevLayout.forEach((row, r) => row.forEach((s, c) => grid.appendChild(createSeatDiv(s, r, c, 'prev'))));
+        updateLayout();
+    }
+
+    function renderCurrentMap(R, C) {
+        const grid = document.getElementById('currentMap');
+        grid.innerHTML = ''; grid.style.gridTemplateColumns = `repeat(${C}, var(--seat-width))`;
+        currentLayout.forEach((row, r) => row.forEach((s, c) => grid.appendChild(createSeatDiv(s, r, c, 'curr', r === R - 1))));
+        updateLayout();
+    }
+
+    async function runOptimization() {
+        if (!students.length) return;
+        const C = parseInt(document.getElementById('cols').value);
+        const R = getAutoRows(students.length, C);
+        const align = document.getElementById('alignLastRow').value;
+        const order = document.getElementById('orderSelect').value;
+        const maxT = parseInt(document.getElementById('maxTrials').value);
+        const targetS = parseInt(document.getElementById('targetSuccess').value);
+        const frontLimit = parseInt(document.getElementById('frontLimit').value);
+        
+        document.getElementById('trial-max').innerText = maxT;
+        document.getElementById('target-count').innerText = targetS;
+        const trialEl = document.getElementById('trial-count'), successEl = document.getElementById('success-count'), msgEl = document.getElementById('final-msg');
+
+        let best = { layout: [], penalty: Infinity };
+        let successCount = 0;
+        let finalI = 0;
+        msgEl.innerText = "計算中...";
+
+        for (let i = 1; i <= maxT; i++) {
+            finalI = i;
+            let res = solve(R, C, order, frontLimit, align);
+            if (res.layout) {
+                successCount++;
+                if (res.penalty < best.penalty) best = res;
+            }
+            // 200回に1回、進捗を表示してブラウザのフリーズを防ぐ
+            if (i % 200 === 0) {
+                trialEl.innerText = i; successEl.innerText = successCount;
+                await new Promise(r => setTimeout(r, 0));
+            }
+            if (successCount >= targetS) break;
+        }
+
+        // 最終的な数値を表示（最大値で上書きせず、実際の試行回数と合格数を出す）
+        trialEl.innerText = finalI; 
+        successEl.innerText = successCount;
+
+        if (best.layout.length) {
+            currentLayout = best.layout;
+            renderCurrentMap(R, C);
+            msgEl.innerText = "生成完了！";
+            document.getElementById('downloadBtn').style.display = 'inline-block';
+        } else {
+            msgEl.innerText = "条件に合う配置が見つかりませんでした。";
+        }
+    }
+
+    function solve(R, C, order, frontLimit, align) {
+        let layout = Array.from({length:R}, () => Array(C).fill(null));
+        let m = students.filter(s=>s.gender==="男").sort(()=>Math.random()-0.5);
+        let f = students.filter(s=>s.gender==="女").sort(()=>Math.random()-0.5);
+        
+        let coords = [];
+        for (let r = 0; r < R; r++) {
+            if (r < R - 1) {
+                for (let c = 0; c < C; c++) coords.push({ r, c });
+            } else {
+                let rowCoords = [];
+                for (let c = 0; c < C; c++) rowCoords.push({ r, c });
+                const needed = students.length - (R - 1) * C;
+                let sel = [];
+                if (align === 'center') {
+                    const mid = (C-1)/2; rowCoords.sort((a,b)=>Math.abs(a.c-mid)-Math.abs(b.c-mid));
+                    sel = rowCoords.slice(0, needed).sort((a,b)=>a.c-b.c);
+                } else if (align === 'left') sel = rowCoords.slice(0, needed);
+                else if (align === 'right') sel = rowCoords.slice(C-needed);
+                sel.forEach(co => coords.push(co));
+            }
+        }
+
+        if (order.startsWith("CHECKER")) {
+            const firstGender = order === "CHECKER_MF" ? "男" : "女";
+            const secondGender = firstGender === "男" ? "女" : "男";
+            coords.forEach(co => {
+                let targetGender = (co.r + co.c) % 2 === 0 ? firstGender : secondGender;
+                let pool = targetGender === "男" ? m : f;
+                if (pool.length === 0) pool = targetGender === "男" ? f : m; 
+                if (pool.length > 0) layout[co.r][co.c] = pool.pop();
+            });
+        } else if (order === "MIX") {
+            let all = [...students].sort(()=>Math.random()-0.5);
+            coords.forEach(co => { if(all.length) layout[co.r][co.c] = all.pop(); });
+        } else {
+            let pairs = [];
+            let m_copy = [...m], f_copy = [...f];
+            while(m_copy.length && f_copy.length) pairs.push({p1:m_copy.pop(), p2:f_copy.pop(), type:'mixed'});
+            while(m_copy.length>=2) pairs.push({p1:m_copy.pop(), p2:m_copy.pop(), type:'same'});
+            while(f_copy.length>=2) pairs.push({p1:f_copy.pop(), p2:f_copy.pop(), type:'same'});
+            let solos = [...m_copy, ...f_copy];
+            pairs.sort(()=>Math.random()-0.5);
+
+            let idx = 0;
+            while(idx < coords.length) {
+                let cur = coords[idx], nxt = coords[idx+1];
+                if(nxt && nxt.r===cur.r && cur.c%2===0 && pairs.length) {
+                    let p = pairs.shift(), s1, s2;
+                    if(p.type==='mixed'){
+                        let bm = p.p1.gender==="男"?p.p1:p.p2, bg = p.p1.gender==="女"?p.p1:p.p2;
+                        if(order==="MF"){s1=bm; s2=bg;}else{s1=bg; s2=bm;}
+                    } else { s1=p.p1; s2=p.p2; }
+                    layout[cur.r][cur.c]=s1; layout[nxt.r][nxt.c]=s2; idx+=2;
+                } else {
+                    if (solos.length) layout[cur.r][cur.c]=solos.shift();
+                    else if (pairs.length) {
+                        let p = pairs[0]; layout[cur.r][cur.c] = p.p1;
+                        p.p1 = p.p2; p.p2 = null; if(!p.p1) pairs.shift();
+                    }
+                    idx++;
+                }
+            }
+        }
+
+        let penalty = 0;
+        for(let r=0; r<R; r++) for(let c=0; c<C; c++) {
+            let s = layout[r][c]; if(!s) continue;
+            if(s.isFront && r >= frontLimit) return {layout:null};
+            for(let dr=-1; dr<=1; dr++) for(let dc=-1; dc<=1; dc++) {
+                if(dr===0 && dc===0) continue;
+                let nr=r+dr, nc=c+dc;
+                if(nr>=0 && nr<R && nc>=0 && nc<C && layout[nr][nc] && s.ngId===layout[nr][nc].id) return {layout:null};
+            }
+            let pCol = (c%2===0)?c+1:c-1;
+            if(pCol>=0 && pCol<C && layout[r][pCol] && s.history.includes(layout[r][pCol].id)) penalty += 5000;
+            if(s.prevRow===r+1 && s.prevCol===c+1) penalty += 1000;
+        }
+        return {layout, penalty};
+    }
+
+    function downloadCSV() {
+        let csv = "\ufeff出席番号,名前,性別,前回行,前回列,前方優先,NG相手出席番号,過去ペア履歴\n";
+        currentLayout.forEach((row, r) => row.forEach((s, c) => {
+            if(!s) return;
+            let pCol = (c%2===0)?c+1:c-1, pId = (pCol>=0 && pCol<row.length && row[pCol])?row[pCol].id : "";
+            csv += `${s.id},${s.name},${s.gender},${r+1},${c+1},${s.isFront?1:0},${s.ngId},"${[pId,...s.history].filter(x=>x).slice(0,8).join(';')}"\n`;
+        }));
+        const blob = new Blob([csv], {type:'text/csv;charset=utf-8;'});
+        const a = document.createElement('a'); a.href = URL.createObjectURL(blob); a.download = "result.csv"; a.click();
+    }
+</script>
+</body>
+</html>
