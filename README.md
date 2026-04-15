@@ -5,7 +5,7 @@
 ## 🌐 ツールを使う（インストール不要）
 
 以下のURLにアクセスするだけで、今すぐブラウザでご利用いただけます。  
-👉 https://uhhh-noname.github.io/sekigae/  
+👉 [https://uhhh-noname.github.io/sekigae/](https://uhhh-noname.github.io/sekigae/)  
 ※データはサーバーに送信されず、あなたのブラウザ内だけで処理されるため安全です。
 
 ---
