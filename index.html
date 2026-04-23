@@ -2,7 +2,7 @@
 <html lang="ja">
 <head>
     <meta charset="UTF-8">
-    <title>座席替え v3.1.1</title>
+    <title>座席替え v3.1.2 - 複数NG対応版</title>
     <style>
         :root { 
             --male-bg: #e3f2fd; --male-border: #2196f3; 
@@ -63,7 +63,7 @@
 <body onresize="updateLayout()">
 
 <div class="no-print">
-    <h1>座席替え v3.1.1</h1>
+    <h1>座席替え v3.1.1 (複数NG対応)</h1>
     <div class="config-row">
         <button class="btn-gray" onclick="downloadTemplate()">① テンプレートDL</button>
         <input type="file" id="csvFile" accept=".csv">
@@ -150,7 +150,7 @@
 
     function downloadTemplate() {
         const header = "出席番号,名前,性別,前回行,前回列,前方優先,NG相手出席番号,過去ペア履歴\n";
-        const examples = "1,田中 太郎,男,1,1,1,,2;5\n2,佐藤 花子,女,1,2,0,5,1\n";
+        const examples = "1,田中 太郎,男,1,1,1,10;12,2;5\n2,佐藤 花子,女,1,2,0,5,1\n";
         const blob = new Blob(["\ufeff" + header + examples], { type: 'text/csv;charset=utf-8;' });
         const a = document.createElement('a'); a.href = URL.createObjectURL(blob); a.download = "template.csv"; a.click();
     }
@@ -162,7 +162,8 @@
             students = lines.slice(1).map(l => ({
                 id: c(l,0), name: c(l,1), gender: c(l,2),
                 prevRow: parseInt(c(l,3))||0, prevCol: parseInt(c(l,4))||0,
-                isFront: parseInt(c(l,5))===1, ngId: c(l,6),
+                isFront: parseInt(c(l,5))===1, 
+                ngIds: c(l,6) ? c(l,6).replace(/"/g,'').split(';').map(s=>s.trim()) : [], // 複数対応修正
                 history: c(l,7) ? c(l,7).replace(/"/g,'').split(';').map(s=>s.trim()) : []
             }));
             function c(l, i) { return l.split(',')[i]?.trim() || ""; }
@@ -262,7 +263,6 @@
                 successCount++;
                 if (res.penalty < best.penalty) best = res;
             }
-            // 200回に1回、進捗を表示してブラウザのフリーズを防ぐ
             if (i % 200 === 0) {
                 trialEl.innerText = i; successEl.innerText = successCount;
                 await new Promise(r => setTimeout(r, 0));
@@ -270,7 +270,6 @@
             if (successCount >= targetS) break;
         }
 
-        // 最終的な数値を表示（最大値で上書きせず、実際の試行回数と合格数を出す）
         trialEl.innerText = finalI; 
         successEl.innerText = successCount;
 
@@ -356,7 +355,8 @@
             for(let dr=-1; dr<=1; dr++) for(let dc=-1; dc<=1; dc++) {
                 if(dr===0 && dc===0) continue;
                 let nr=r+dr, nc=c+dc;
-                if(nr>=0 && nr<R && nc>=0 && nc<C && layout[nr][nc] && s.ngId===layout[nr][nc].id) return {layout:null};
+                // NG判定の修正：配列に含まれているかを確認
+                if(nr>=0 && nr<R && nc>=0 && nc<C && layout[nr][nc] && s.ngIds.includes(layout[nr][nc].id)) return {layout:null};
             }
             let pCol = (c%2===0)?c+1:c-1;
             if(pCol>=0 && pCol<C && layout[r][pCol] && s.history.includes(layout[r][pCol].id)) penalty += 5000;
@@ -370,7 +370,8 @@
         currentLayout.forEach((row, r) => row.forEach((s, c) => {
             if(!s) return;
             let pCol = (c%2===0)?c+1:c-1, pId = (pCol>=0 && pCol<row.length && row[pCol])?row[pCol].id : "";
-            csv += `${s.id},${s.name},${s.gender},${r+1},${c+1},${s.isFront?1:0},${s.ngId},"${[pId,...s.history].filter(x=>x).slice(0,8).join(';')}"\n`;
+            // NG書き出しの修正：配列をセミコロンで結合
+            csv += `${s.id},${s.name},${s.gender},${r+1},${c+1},${s.isFront?1:0},${s.ngIds.join(';')},"${[pId,...s.history].filter(x=>x).slice(0,8).join(';')}"\n`;
         }));
         const blob = new Blob([csv], {type:'text/csv;charset=utf-8;'});
         const a = document.createElement('a'); a.href = URL.createObjectURL(blob); a.download = "result.csv"; a.click();
